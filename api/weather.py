@@ -2,37 +2,37 @@ from http.server import BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 import json
 import urllib.request
+import urllib.error
 
 class handler(BaseHTTPRequestHandler):
     def do_GET(self):
-        query = parse_qs(urlparse(self.path).query)
-        city = query.get('city', ['London'])[0]
+        try:
+            query = parse_qs(urlparse(self.path).query)
+            amount = query.get('amount', ['1'])[0]
+            from_cur = query.get('from', ['USD'])[0].upper()
+            to_cur = query.get('to', ['INR'])[0].upper()
 
-        # Step 1: Get coordinates for the city
-        geo_url = f"https://geocoding-api.open-meteo.com/v1/search?name={city}&count=1"
-        geo_req = urllib.request.urlopen(geo_url)
-        geo_data = json.loads(geo_req.read().decode())
+            # Call Frankfurter API
+            url = f"https://api.frankfurter.app/latest?amount={amount}&from={from_cur}&to={to_cur}"
+            
+            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+            with urllib.request.urlopen(req, timeout=5) as res:
+                data = json.loads(res.read().decode())
 
-        if "results" not in geo_data:
-            response = {"error": f"City '{city}' not found"}
-        else:
-            lat = geo_data["results"][0]["latitude"]
-            lon = geo_data["results"][0]["longitude"]
-            country = geo_data["results"][0]["country"]
+            if "rates" not in data or to_cur not in data["rates"]:
+                response = {"error": "Invalid currency code. Try USD, INR, EUR, GBP, JPY"}
+            else:
+                converted = data["rates"][to_cur]
+                response = {
+                    "from": from_cur,
+                    "to": to_cur,
+                    "amount": float(amount),
+                    "converted": round(converted, 2),
+                    "rate": round(converted / float(amount), 4)
+                }
 
-            # Step 2: Get weather using coordinates
-            weather_url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current_weather=true"
-            weather_req = urllib.request.urlopen(weather_url)
-            weather_data = json.loads(weather_req.read().decode())
-            current = weather_data["current_weather"]
-
-            response = {
-                "city": city,
-                "country": country,
-                "temperature_c": current["temperature"],
-                "windspeed_kmh": current["windspeed"],
-                "condition": "Sunny" if current["weathercode"] == 0 else "Cloudy/Rainy"
-            }
+        except Exception as e:
+            response = {"error": str(e)}
 
         self.send_response(200)
         self.send_header('Content-type', 'application/json')
